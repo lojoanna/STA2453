@@ -1,4 +1,4 @@
-# Spatial Transcriptomics Analysis of the Mouse Brain
+# Predicting Gene Expression from Neighbouring Cells
 
 ## Overview
 
