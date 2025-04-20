@@ -4,16 +4,36 @@
 # This script loads necessary libraries and defines global options,
 # including specifying the base directory for the dataset.
 #
+
+# Load required libraries
+
+# Tidyverse + data handling
 library(tidyverse)
 library(data.table)
 library(Matrix)
-library(Rfast)
 library(matrixStats)
+library(Rfast)
+
+# Plotting
 library(ggridges)
+library(ComplexHeatmap)
+library(circlize)
+
+# Modeling & statistics
+library(lmtest)
+library(mclust)
+library(pROC)
+
+# Parallelization
+library(future.apply)
+
+# Python interop
 library(reticulate)
 library(anndata)
-library(ComplexHeatmap)
-library(lmtest)
+
+# Additional utilities
+library(conflicted)
+library(hash)
 
 # Specify directory where data is saved
 dir_path <- "~/Documents/***COURSEWORK***/STA2453H/Research/(+) GitHub/data"

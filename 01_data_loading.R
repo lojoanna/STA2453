@@ -5,6 +5,7 @@
 # extracts sample names, and loads each dataset into list objects.
 # It assumes that 'dir_path' is defined in 00_setup.R.
 #
+
 # Get file paths for expression and metadata files
 expression_files <- dir_path[str_detect(dir_path, "expression")]
 expression_files <- str_c(expression_files, "/", list.files(expression_files))
@@ -18,9 +19,9 @@ sample_names <- str_remove(sample_names, "_cell_by_gene")
 sample_names <- str_remove(sample_names, ".csv")
 
 # Initialize list objects to store datasets (one element per sample)
-data_list <- vector(mode = "list", length = length(expression_files))
-names(data_list) <- sample_names
-metadata_list <- vector(mode = "list", length = length(expression_files))
+data_list            <- vector(mode = "list", length = length(expression_files))
+names(data_list)     <- sample_names
+metadata_list        <- vector(mode = "list", length = length(expression_files))
 names(metadata_list) <- sample_names
 
 # Load datasets: gene expression matrices and corresponding metadata

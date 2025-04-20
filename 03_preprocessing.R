@@ -7,13 +7,14 @@
 # - Computing average gene expression across cells.
 #
 # It assumes that 'data_list' and 'metadata_list' have been loaded from 01_data_loading.R.
-# It also assumes that custom functions are available from 03_analysis_functions.R.
+# It also assumes that custom functions are available from 02_analysis_functions.R.
 #
+
 # Source custom analysis functions
 source("~/Documents/***COURSEWORK***/STA2453H/Research/(+) GitHub/scripts/02_analysis_functions.R")
 
 # Define rotation degrees for counter-clockwise rotation
-rotation_degrees <- c(175, 165, 234, 238, 41, 165, 224, 353, 65)
+rotation_degrees <- c(175, 238, 224, 165, 41, 353, 234, 165, 65)
 #rotation_degrees <- 360 - rotation_degrees
 
 # Rotate each slice and display before and after plots
@@ -56,8 +57,8 @@ for (i in seq_along(data_list)) {
   temp_expr <- data_list[[i]]
   temp_metadata <- metadata_list[[i]]
   
-  # Remove cells with fewer than 50 counts (quality control)
-  hits <- rowSums(temp_expr) >= 50
+  # Remove cells with fewer than 55 counts (quality control)
+  hits <- rowSums(temp_expr) >= 55
   temp_expr <- temp_expr[hits, ]
   temp_metadata <- temp_metadata[hits, ]
   

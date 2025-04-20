@@ -2,8 +2,55 @@
 # Custom functions for spatial transcriptomics analysis.
 #
 # This script defines custom functions used throughout the analysis,
-# including coordinate rotation, tissue expression plotting, and co-occurrence statistics.
+# including coordinate rotation, tissue expression plotting, and GO enrichment.
 #
+
+#' Compute Pearson Correlations Between Matrix Columns
+#'
+#' If only `matrix1` is supplied, returns pairwise correlations among its columns.
+#' If `matrix2` is supplied, returns correlations between columns of `matrix1` and `matrix2`.
+#'
+#' @param matrix1 A numeric matrix.
+#' @param matrix2 An optional numeric matrix.
+#'
+#' @return A correlation matrix.
+#' @export
+correlation <- function(matrix1, matrix2 = NULL) {
+  # Single-matrix correlations
+  if (is.null(matrix2)) {
+    output <- (t(scale(matrix1)) %*% scale(matrix1)) / (nrow(matrix1) - 1)
+  } else {
+    # Two-matrix correlations
+    output <- (t(scale(matrix1)) %*% scale(matrix2)) / (nrow(matrix1) - 1)
+  }
+  
+  # Return correlation matrix
+  return(output)
+}
+
+
+#' Scale a Numeric Vector to [0, 1]
+#'
+#' Rescales `vector` so that its minimum maps to 0 and maximum maps to 1.
+#'
+#' @param vector A numeric vector.
+#'
+#' @return A numeric vector scaled between 0 and 1.
+#' @export
+scale_01 <- function(vector) {
+  # Convert to plain numeric vector
+  vec <- as.vector(vector)
+  
+  # Get minimum value
+  min_value <- min(vec, na.rm = TRUE)
+  
+  # Scale to [0, 1]
+  output <- (vec - min_value) / (max(vec, na.rm = TRUE) - min_value)
+  
+  # Return scaled vector
+  return(output)
+}
+
 
 #' Rotate Coordinates for Visualization
 #'
@@ -45,6 +92,64 @@ rotate_coordinates <- function(x, y, n_degrees = 0, center = FALSE, scale = FALS
   output <- data.frame(pos_x = x_rotated, pos_y = y_rotated)
   return(output)
 }
+
+
+#' Cross-Expression Correlation Between Cell-Neighbor Pairs
+#'
+#' Identifies mutually exclusive expression pairs and computes Pearson
+#' correlations between cells and their neighbors for each gene pair.
+#'
+#' @param data A cells-by-genes expression matrix.
+#' @param locations A cells-by-coordinate(s) matrix or data frame.
+#' @param neighbor Integer: the n-th nearest neighbor (1 = first).
+#' @param output_matrix Logical: if TRUE, returns full correlation matrix.
+#'
+#' @return A data frame of gene pairs with correlation values, or (if
+#'   `output_matrix = TRUE`) the full symmetric correlation matrix.
+#' @export
+cross_expression_correlation <- function(data, locations,
+                                         neighbor = 1,
+                                         output_matrix = FALSE) {
+  # Compute neighbor indices
+  neighbor_idx <- neighbor + 1
+  nn <- RANN::nn2(locations, locations,
+                  k = neighbor_idx,
+                  searchtype = "standard",
+                  treetype = "kd")
+  distances <- nn$nn.idx[, neighbor_idx]
+  data_temp <- data[distances, ]
+  
+  # Create mutually exclusive masks
+  mask_data      <- (data > 0) * data
+  mask_data_temp <- (data_temp > 0) * data_temp
+  
+  X <- mask_data * (1 - mask_data_temp)
+  Y <- mask_data_temp * (1 - mask_data)
+  
+  # Keep original expression values where mask is TRUE
+  X <- X * data
+  Y <- Y * data_temp
+  
+  # Compute correlations and symmetrize
+  corr_mat <- correlation(X, Y)
+  corr_mat <- (corr_mat + t(corr_mat)) / 2
+  
+  if (output_matrix) {
+    # Return full correlation matrix
+    return(corr_mat)
+  }
+  
+  # Return tidy edge list of upper triangle
+  ids <- which(upper.tri(corr_mat), arr.ind = TRUE)
+  result <- data.frame(
+    gene1       = rownames(corr_mat)[ids[, 1]],
+    gene2       = colnames(corr_mat)[ids[, 2]],
+    correlation = upper_tri(corr_mat)
+  )
+  
+  return(result)
+}
+
 
 #' Plot Tissue Expression Based on Two Genes
 #'
@@ -161,36 +266,150 @@ tissue_expression_plot <- function(expr_data, location_df, gene1, gene2,
   return(plot_obj)
 }
 
-#' Compute Co-occurrence Statistics Between Two Matrices
+
+#' Compute GO Enrichment via Hypergeometric Test
 #'
-#' This function computes the number of shared elements between the columns of two matrices.
-#' It optionally converts the matrices to a sparse format and binarizes them (all positive values are set to 1).
+#' For a given set of test genes, performs GO term enrichment against a background
+#' via hypergeometric tests, applies FDR correction, and returns significant terms.
 #'
-#' @param matrix1 A numeric matrix.
-#' @param matrix2 A numeric matrix.
-#' @param sparse Logical; if TRUE, converts matrices to sparse format.
-#' @param binarize Logical; if TRUE, binarizes the matrices (all positive values are set to 1).
+#' @param test_genes Character vector of gene symbols to test.
+#' @param background_genes Character vector of background gene symbols; defaults to NULL (all genes).
+#' @param species Character; "mouse" or "human". Default: "mouse".
+#' @param GO_group_min_size Integer; minimum GO group size. Default: 20.
+#' @param GO_group_max_size Integer; maximum GO group size. Default: 500.
+#' @param alpha Numeric; FDR threshold for significance. Default: 0.05.
 #'
-#' @return A list with two elements: 'cooccur' (the co-occurrence counts) and 'cells'
-#'   (the dot product of matrix1 with itself).
+#' @return A list with elements:
+#'   - p_values: data frame of GO terms, p-values, and significance flags
+#'   - GO_matrix: binary GO×gene matrix used for testing
 #' @export
-get_cooccurrence_stats <- function(matrix1, matrix2, sparse = TRUE, binarize = TRUE) {
-  # Convert to sparse matrices if specified
-  if (sparse) {
-    matrix1 <- Matrix(data = Matrix::as.matrix(matrix1), sparse = TRUE)
-    matrix2 <- Matrix(data = Matrix::as.matrix(matrix2), sparse = TRUE)
+GO_enrichment <- function(test_genes, background_genes = NULL,
+                          species = "mouse",
+                          GO_group_min_size = 20,
+                          GO_group_max_size = 500,
+                          alpha = 0.05) {
+  if (species == "mouse") {
+    library(org.Mm.eg.db)
+  }
+  if (species == "human") {
+    library(org.Hs.eg.db)
+  }
+  library(GO.db)
+  conflicted::conflict_prefer("select", "dplyr")
+  conflicted::conflict_prefer("filter", "dplyr")
+  conflicted::conflict_prefer("rename", "dplyr")
+  conflicted::conflict_prefer("as.matrix", "base")
+  conflicted::conflict_prefer("union", "base")
+  conflicted::conflict_prefer("intersect", "base")
+  
+  # Map GO IDs to gene IDs
+  if (species == "mouse") {
+    goAnnots <- as.list(org.Mm.egGO2ALLEGS)
+  }
+  if (species == "human") {
+    goAnnots <- as.list(org.Hs.egGO2ALLEGS)
   }
   
-  # Binarize matrices if requested (all positive values become 1)
-  if (binarize) {
-    matrix1[matrix1 > 0] <- 1
-    matrix2[matrix2 > 0] <- 1
+  # Convert to long tibble of GO_id × NCBI_ID
+  goAnnots <- tibble(GO_id = names(goAnnots), NCBI_ID = goAnnots) %>% unnest(NCBI_ID)
+  
+  # Map NCBI IDs to symbols
+  if (species == "mouse") {
+    goAnnots <- inner_join(goAnnots, org.Mm.egSYMBOL %>% as.data.frame() %>% rename(NCBI_ID = gene_id, gene_symbol = symbol))
+  }
+  if (species == "human") {
+    goAnnots <- inner_join(goAnnots, org.Hs.egSYMBOL %>% as.data.frame() %>% rename(NCBI_ID = gene_id, gene_symbol = symbol))
   }
   
-  # Compute the number of shared elements between columns
-  cooccur <- t(matrix1) %*% matrix2
-  cells   <- t(matrix1) %*% matrix1
+  # Remove duplicates
+  goAnnots %<>% distinct()
   
-  output <- list(cooccur = cooccur, cells = cells)
+  # Add in aspect
+  goAnnots %<>% mutate(GO_aspect = Ontology(GO_id))
+  
+  # Add in GO group name
+  goAnnots %<>% mutate(GO_name = Term(GO_id))
+  
+  # Add in GO group size info
+  goAnnots %<>% inner_join(goAnnots %>% group_by(GO_id) %>% dplyr::count() %>% rename(GO_group_size = n))
+  
+  # Build GO × gene matrix
+  go_wide <- goAnnots %>%
+    select(GO_id, gene_symbol) %>%
+    mutate(value = 1) %>%
+    pivot_wider(
+      names_from  = GO_id,
+      id_cols     = gene_symbol,
+      values_fill = 0
+    )
+  go_matrix <- as.matrix(go_wide %>% select(-gene_symbol))
+  rownames(go_matrix) <- go_wide %>% pull(gene_symbol)
+  
+  # Convert annotations to data frame
+  goAnnots <- as.data.frame(goAnnots)
+  
+  # Define background and test sets
+  if (is.null(background_genes)) {
+    background_genes <- rownames(go_matrix)
+  }
+  test_genes <- intersect(test_genes, rownames(go_matrix))
+  background_genes <- intersect(background_genes, rownames(go_matrix))
+  background_genes <- union(test_genes, background_genes)
+  
+  # Subset GO matrix to background genes and filter GO groups
+  go_matrix <- go_matrix[rownames(go_matrix) %in% background_genes,]
+  go_matrix <- go_matrix[, colSums(go_matrix) != 0]
+  annot <- data.frame(GO_id = unique(goAnnots$GO_id), GO_name = unique(goAnnots$GO_name))
+  annot <- annot[annot$GO_id %in% colnames(go_matrix),]
+  colnames(go_matrix) <- annot$GO_name
+  go_matrix <- t(go_matrix)
+  
+  # Curate GO groups
+  GO_groups <- data.frame(group = rownames(go_matrix), size = as.numeric(rowSums(go_matrix)))
+  
+  if (is.null(GO_group_max_size)){GO_group_max_size = max(GO_groups$size)}
+  
+  go_matrix <- go_matrix[(GO_groups$size >= GO_group_min_size) & (GO_groups$size <= GO_group_max_size),]
+  GO_groups <- GO_groups[(GO_groups$size >= GO_group_min_size) & (GO_groups$size <= GO_group_max_size),]
+  
+  # GO enrichment: hypergeometric test per GO group
+  pvals <- vector(mode = "numeric", length = nrow(go_matrix))
+  
+  for (i in 1:nrow(go_matrix)){
+    
+    overlap  <- go_matrix[i,] == 1
+    overlap  <- names(overlap[overlap])
+    overlap  <- length(intersect(overlap, test_genes))
+    
+    k <- length(test_genes)    # Sample size: number of genes picked from GO group (balls picked)
+    q <- overlap - 1           # Observed successes: number of genes from k actually observed in GO group (number of white balls seen)
+    m <- sum(go_matrix[i,])    # Possible successes: number of all genes present in GO group (number of white balls in the population)
+    n <- ncol(go_matrix) - m   # Possible failures:  number of all genes absent in GO group (number of black balls in the population)
+    
+    pvals[i] <- phyper(q = q, m = m, n = n, k = k, lower.tail = FALSE)
+  }
+  
+  # Process p-values
+  pvals_orig <- pvals
+  pvals_FDR <- p.adjust(pvals, method = "BH")
+  pvals <- data.frame(GO_groups, pvals_orig, pvals_FDR)
+  
+  pvals_orig[pvals_orig == 0] <- min(pvals_orig[pvals_orig > 0])
+  pvals_FDR[pvals_FDR == 0]   <- min(pvals_FDR[pvals_FDR > 0])
+  
+  pvals <- data.frame(pvals, sig_GO <- as.numeric(pvals$pvals_FDR <= alpha))
+  
+  # Append full GO annotations
+  pvals <- data.frame(GO_id = goAnnots[match(pvals$group, goAnnots$GO_name), 1], 
+                      group = pvals$group, 
+                      GO_aspect = goAnnots[match(pvals$group, goAnnots$GO_name), 4], 
+                      pvals[,2:ncol(pvals)])
+  rownames(pvals) <- 1:nrow(pvals)
+  rownames(go_matrix) <- pvals$GO_id
+  
+  # Combine output
+  output <- list(pvals, go_matrix)
+  names(output) <- c("p_values","GO_matrix")
+  
   return(output)
 }

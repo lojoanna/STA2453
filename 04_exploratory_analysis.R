@@ -8,7 +8,7 @@
 # - Field-of-view (FOV) analysis and nearest-neighbor relationships.
 # - Visualization of cell-neighbor gene expression similarity.
 #
-# It assumes that the data has been preprocessed in 02_preprocessing.R and that custom functions are available.
+# It assumes that the data has been preprocessed in 03_preprocessing.R and that custom functions are available.
 #
 
 # Plot distribution of total mRNA counts per cell
@@ -165,8 +165,10 @@ for (i in seq_along(metadata_list)) {
               searchtype = "standard")$nn.idx[, 2],
   ]
   
+  colnames(neighbor_metadata)[colnames(neighbor_metadata) == "V1"] <- "cell_id"
+  
   temp_expr <- data_list[[i]]
-  neighbor_expr <- data_list[[i]][match(neighbor_metadata$cell_id, rownames(data_list[[i]])), ]
+  neighbor_expr <- data_list[[i]][match(neighbor_metadata$cell_id, rownames(data_list[[i]])), , drop = FALSE]
   
   # Z-score normalize the expression data for correlation calculation
   temp_expr <- scale(t(temp_expr))
@@ -185,7 +187,7 @@ ggplot(cell_neighbor_corr_df) +
   theme_classic()
 
 # Example usage of tissue expression plotting function
-# (Assumes that the custom function is defined in 03_analysis_functions.R)
+# (Assumes that the custom function is defined in 02_analysis_functions.R)
 tissue_expression_plot(expr_data = data_list[[2]],
                        location_df = metadata_list[[2]][, c("x", "y")],
                        gene1 = "Lgr6", gene2 = "Adra2b",
